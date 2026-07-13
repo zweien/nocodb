@@ -9,13 +9,17 @@ import { AuthTokenStrategy } from '~/strategies/authtoken.strategy/authtoken.str
 import { OAuthTokenStrategy } from '~/strategies/oauth-token.strategy';
 import { BaseViewStrategy } from '~/strategies/base-view.strategy/base-view.strategy';
 import { GoogleStrategyProvider } from '~/strategies/google.strategy/google.strategy';
+import { OidcClient } from '~/modules/sso-ce/oidc.client';
+import { SsoCeController } from '~/modules/sso-ce/sso-ce.controller';
 import { AuthService } from '~/modules/auth/auth.service';
 import { AuthController } from '~/modules/auth/auth.controller';
 
 export const authModuleMetadata = {
   imports: [PassportModule, NocoModule],
   controllers: [
-    ...(process.env.NC_WORKER_CONTAINER !== 'true' ? [AuthController] : []),
+    ...(process.env.NC_WORKER_CONTAINER !== 'true'
+      ? [AuthController, SsoCeController]
+      : []),
   ],
   providers: [
     AuthService,
@@ -25,6 +29,7 @@ export const authModuleMetadata = {
     BaseViewStrategy,
     BasicStrategy,
     GoogleStrategyProvider,
+    OidcClient,
   ],
   exports: [],
 };
