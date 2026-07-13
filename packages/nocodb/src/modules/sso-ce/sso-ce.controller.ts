@@ -97,15 +97,14 @@ export class SsoCeController {
       NcError.unauthorized('Invalid, expired, or already-used short token.');
     }
 
-    // setRefreshToken needs req.user populated. The short-token store holds
-    // the resolved user object; attach it to a shallow req copy so the
-    // refresh-token cookie is set (session persistence across browser
-    // restarts). Mirrors what AuthController.signin does after its guard
-    // populates req.user.
-    await this.usersService.setRefreshToken({
-      req: { ...req, user } as any,
-      res,
-    });
+    // Attach the resolved user to req so setRefreshToken can populate
+    // req.user.token_version (rotated for single-session enforcement) and
+    // login/genJwt can read the rotated value when signing the JWT. Using the
+    // same req object through both calls mirrors AuthController.signin
+    // (auth.controller.ts:94-96) — a shallow copy here would lose the
+    // token_version mutation and cause the next request to 401.
+    (req as any).user = user;
+    await this.usersService.setRefreshToken({ req, res });
     const result = await this.usersService.login(user, req);
     setAuthCookie(res, result.token);
 
