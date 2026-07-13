@@ -242,18 +242,27 @@ import explicit and version-pinned.
 
 File: `packages/nocodb/src/modules/sso-ce/oidc.client.ts`.
 
-- `getOidcClient(): Promise<Client>`:
+- `getConfiguration(): Promise<{ config: Configuration; oidcConfig }>`:
   1. Read env vars via `oidc.config.ts`. Throw if required vars missing.
-  2. `Issuer.discover(issuerUrl)` to auto-discover endpoints (avoids
-     hard-coding Authentik URLs; tolerates IdP config drift).
-  3. `new issuer.Client({ client_id, client_secret, redirect_uris:
-     [${ncSiteUrl}/auth/oidc/callback], response_types: ['code'] })`.
-  4. Cache the client in a module-level variable (re-discover on error or
-     every 10 min to tolerate IdP key rotation).
-- Exposes three helpers used by the controller:
-  - `buildAuthorizationUrl(state: string): Promise<string>`
-  - `handleCallback(code: string, state: string): Promise<TokenSet>`
-  - `fetchProfile(tokenSet: TokenSet): Promise<Profile>`
+  2. `oidc.discovery(new URL(issuer), clientId, clientSecret)` to
+     auto-discover endpoints (avoids hard-coding Authentik URLs; tolerates
+     IdP config drift). Returns a v6 `Configuration` object.
+  3. Cache the configuration in a module-level variable (re-discover on
+     issuer change or every 10 min to tolerate IdP key rotation).
+- The `@Injectable()` `OidcClient` exposes three methods used by the
+  controller:
+  - `isConfigured(): boolean`
+  - `getAuthorizationUrl(state, codeVerifier): Promise<string>` — builds the
+    PKCE `code_challenge` from `codeVerifier` and calls
+    `oidc.buildAuthorizationUrl(config, { redirect_uri, scope,
+    code_challenge, code_challenge_method: 'S256', state })`.
+  - `handleCallback(callbackUrl, state, codeVerifier, req): Promise<{ user,
+    ssoClientId }>` — calls
+    `oidc.authorizationCodeGrant(config, new URL(callbackUrl), {
+    pkceCodeVerifier: codeVerifier, expectedState: state })`, then
+    `oidc.fetchUserInfo(config, accessToken, claims.sub)` (with fallback to
+    ID-token claims), then resolves/creates the user, then stamps
+    `user.extra = { sso_client_id }`.
 
 ### User lookup / provisioning
 
@@ -448,15 +457,28 @@ End-to-end acceptance tests after implementation:
 
 ## 13. Open Questions
 
-None at design time. Implementation may surface:
+Implementation resolved the design-time questions and surfaced one change:
 
-- Exact shape of the userinfo `Profile` returned by `openid-client` for
-  Authentik's userinfo endpoint (resolved during implementation by logging
-  the profile on first callback; `email` vs `preferred_username` field name
-  may differ by Authentik version).
-- Whether `openid-client`'s `Issuer.discover` caches keys across IdP key
-  rotations (it does via its built-in keystore; we still re-discover every
-  10 min as a safety net).
-- Outbound HTTPS reachability from the NocoDB container to the Authentik
-  issuer URL — required for discovery and token exchange. If Authentik uses
-  an internal CA, `NODE_EXTRA_CA_CERTS` must be set.
+- **openid-client v6 API (resolved).** Task 1 installed `openid-client@^6.8.4`,
+  which replaced the v5 class-based API (`Issuer.discover`, `new issuer.Client`,
+  `client.authorizationUrl/callback/userinfo`) with a functional API. The
+  implementation uses `discovery()`, `buildAuthorizationUrl()`,
+  `authorizationCodeGrant()`, `fetchUserInfo()`. This also required adopting
+  PKCE (v6 strongly recommends it): the controller generates a
+  `code_verifier` via `randomPKCECodeVerifier()`, stores it alongside the
+  state nonce in `state.store`, and passes it to `authorizationCodeGrant` as
+  `pkceCodeVerifier`. The `state.store` signature changed from
+  `issueState(): string` / `consumeState(state): boolean` to
+  `issueState(codeVerifier): string` /
+  `consumeState(state): { codeVerifier } | null`.
+- **userinfo profile shape (partially resolved).** The implementation tries
+  `fetchUserInfo(config, accessToken, claims.sub)` first and falls back to
+  ID-token `claims()` if the userinfo endpoint is unavailable. Email
+  extraction: `profile.email || profile.preferred_username`. The exact
+  Authentik field names should be confirmed during the Task 8 manual E2E.
+- **Issuer key rotation (resolved).** `openid-client` v6's `Configuration`
+  caches the IdP's JWKS internally. The implementation also re-runs
+  `discovery()` every 10 minutes (or on issuer URL change) as a safety net.
+- **Outbound HTTPS / private CA (open — operator concern).** The NocoDB
+  container must reach `NC_OIDC_ISSUER` for discovery and token exchange.
+  If Authentik uses a private CA, set `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`.
