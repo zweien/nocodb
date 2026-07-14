@@ -49,10 +49,21 @@ export class OidcClient {
       return { config: cachedConfig.config, oidcConfig };
     }
 
+    // openid-client v6 blocks non-HTTPS issuers by default. For local dev
+    // (http://localhost IdPs like Authentik), allow insecure requests via
+    // the execute option on discovery — it propagates to all subsequent
+    // requests made with this Configuration. Automatic when issuer is http:,
+    // or set NC_OIDC_ALLOW_INSECURE=true to force-enable.
+    const isInsecure =
+      new URL(oidcConfig.issuer).protocol === 'http:' ||
+      process.env.NC_OIDC_ALLOW_INSECURE === 'true';
+
     const config = await oidc.discovery(
       new URL(oidcConfig.issuer),
       oidcConfig.clientId,
       oidcConfig.clientSecret,
+      undefined,
+      isInsecure ? { execute: [oidc.allowInsecureRequests] } : undefined,
     );
 
     cachedConfig = {
@@ -61,6 +72,20 @@ export class OidcClient {
       fetchedAt: Date.now(),
     };
     return { config, oidcConfig };
+  }
+
+  /** Options object passed to openid-client v6 grant/userinfo calls when
+   * insecure HTTP is allowed. The discovery-time execute option propagates
+   * to the Configuration, but grant/userinfo accept their own options too. */
+  private insecureOptions(): any {
+    const oidcConfig = readOidcConfig(ncSiteUrl);
+    const isInsecure =
+      oidcConfig &&
+      (new URL(oidcConfig.issuer).protocol === 'http:' ||
+        process.env.NC_OIDC_ALLOW_INSECURE === 'true');
+    return isInsecure
+      ? { execute: [oidc.allowInsecureRequests] }
+      : undefined;
   }
 
   /**
@@ -110,6 +135,7 @@ export class OidcClient {
       {
         pkceCodeVerifier: codeVerifier,
         expectedState: state,
+        ...this.insecureOptions(),
       },
     );
 
@@ -122,6 +148,7 @@ export class OidcClient {
           config,
           tokenSet.access_token,
           claims.sub,
+          this.insecureOptions(),
         );
       } catch {
         // userinfo endpoint may be unavailable; fall back to ID token claims
