@@ -1,0 +1,18 @@
+# Exclude heavy/unnecessary dirs from the docker build context.
+# Kept small so the CI builder's COPY step is fast.
+**/node_modules
+**/dist
+**/build
+.git
+**/.cache
+**/coverage
+**/.nuxt
+**/.output
+**/test-results
+**/playwright-report
+**/blob-report
+**/.turbo
+**/.rspack
+# Keep docs out of the image but they're small; exclude for cleanliness.
+docs/superpowers
+.superpowers
