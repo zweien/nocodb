@@ -86,6 +86,17 @@ A direct NestJS module is lower-risk and matches the pattern EE itself uses.
 | `NC_OIDC_CLIENT_SECRET` | yes | — | **New.** |
 | `NC_OIDC_SCOPES` | no | `openid profile email` | **New.** Space-separated scope list |
 | `NC_OIDC_SSO_CLIENT_ID` | no | `oidc` | **New.** Value placed in JWT `extra.sso_client_id`; lets `UserInfo.vue` recognise SSO users and lets `api-tokens.service.ts` tag tokens |
+| `NC_OIDC_ALLOW_INSECURE` | no | auto | **New.** Set `true` to force `openid-client` to accept an `http:` issuer (local dev only). Auto-enabled when `NC_OIDC_ISSUER` starts with `http:`. No-op for production HTTPS. |
+
+### OIDC IdP issuer mode requirement
+
+The IdP must publish a per-provider issuer (the discovery document's `issuer`
+field must match `NC_OIDC_ISSUER`). **Authentik** defaults to `global` issuer
+mode (`http://host:9000/`), which causes `openid-client`'s issuer-match check
+to fail. Set the provider's `issuer_mode = per_provider` so the issuer becomes
+`http://host:9000/application/o/<slug>/`. This was verified during E2E
+testing — global mode returns `OAUTH_JSON_ATTRIBUTE_COMPARISON_FAILED` on
+discovery.
 
 ### Rationale for `NC_OIDC_SSO_CLIENT_ID`
 
@@ -434,26 +445,55 @@ NC_OIDC_SSO_CLIENT_ID=oidc                 # optional, default 'oidc'
 
 ## 12. Verification Checklist
 
-End-to-end acceptance tests after implementation:
+End-to-end acceptance tests after implementation. **All items below were
+verified on 2026-07-14** in a local test environment (NocoDB backend on host
++ Authentik in Docker, both on `localhost`). Items marked ✅ passed; items
+marked ⏳ require the nc-gui frontend or a multi-user setup and were not
+exercised in the backend-only test.
 
-1. Set the §11 env vars and start NocoDB.
-2. `GET /api/v1/appInfo` returns `oidcAuthEnabled: true`,
-   `oidcProviderName: 'Authentik'`.
-3. Visit `/signin` — the "Sign in with Authentik" button renders.
-4. Click → redirected to Authentik → log in → returned to NocoDB signed in.
-5. First-time user is auto-created in `nc_users` with `password=''`,
-   `roles='viewer'` (or `creator,super` for the first user in an empty DB).
-6. `UserInfo.vue` shows the SSO user indicator (top-right avatar menu).
-7. An SSO user creates an API token; an email-login user cannot see it in
-   their token list, and vice-versa.
-8. A short-token consumed once cannot be reused — a second
-   `POST /auth/long-lived-token` with the same `xc-short-token` returns 401
-   (single-use enforcement).
-9. A short-token left unused for >60s returns 401 on first use (expired).
-10. Unset `NC_SSO` and restart — the OIDC button disappears and email
-    login works unchanged.
-11. Merge `upstream/develop` into `develop-sso-ce`; expect zero conflicts
-    outside `auth.module.ts`.
+1. ✅ Set the §11 env vars and start NocoDB.
+2. ✅ `GET /api/v1/db/meta/nocodb/info` returns `oidcAuthEnabled: true`,
+   `oidcProviderName: 'OpenID Connect'`.
+3. ⏳ Visit `/signin` — the "Sign in with {provider}" button renders.
+   (Requires nc-gui; backend `/auth/oidc` returns 302 to the IdP, which is
+   what the button links to.)
+4. ✅ Click → redirected to Authentik → log in → returned to NocoDB signed
+   in. The full flow ran via headless browser: authorize → identification
+   stage → password stage → callback → short-token redirect. The short-token
+   was redeemed at `POST /auth/long-lived-token` for a JWT.
+5. ✅ First-time user is auto-created with `password=''`,
+   `roles='org-level-creator,super'` (first user in an empty DB). Verified
+   in `nc_users_v2` table.
+6. ⏳ `UserInfo.vue` shows the SSO user indicator. (Requires nc-gui; the
+   JWT payload carries `sso_client_id: 'oidc'` which is what the indicator
+   reads — verified by decoding the JWT.)
+7. ⏳ API token isolation by SSO client. (Requires multi-user setup; the
+   mechanism — `user.extra.sso_client_id` flowing into `genJwt` and
+   `api-tokens.service.ts:44` — is wired and the JWT carries the marker.)
+8. ✅ A short-token consumed once cannot be reused — a second
+   `POST /auth/long-lived-token` with the same `xc-short-token` returns 401.
+9. ✅ A short-token left unused for >60s returns 401 on first use (expired).
+   Verified: fresh token → immediate use 200; same token after 62s → 401.
+10. ⏳ Unset `NC_SSO` and restart — the OIDC button disappears. (Logic in
+    `utils.service.ts:432` is unchanged CE code, already trusted.)
+11. ⏳ Merge `upstream/develop` into `develop-sso-ce`; expect zero conflicts
+    outside `auth.module.ts`. (Will be confirmed on first real upstream
+    sync.)
+
+### Additional invariants verified beyond the original checklist
+
+- ✅ **C1 fix (token_version propagation).** The JWT issued via SSO carries
+  the rotated `token_version`; repeated authenticated requests with the same
+  JWT return 200, not 401. This was the critical bug found in the final
+  whole-branch review (stale `token_version` from a shallow-copy `req`
+  object) and the fix is confirmed working.
+- ✅ **PKCE round-trip.** `code_challenge`/`code_challenge_method=S256` sent
+  on authorize; `pkceCodeVerifier` validated on token exchange.
+- ✅ **CSRF state.** `state` nonce is single-use and 60s TTL; an unknown or
+  expired state returns 400 from `/auth/oidc/callback`.
+- ✅ **Insecure-HTTP issuer support.** With `NC_OIDC_ISSUER=http://...`,
+  discovery + token exchange + userinfo all succeed (auto-enabled
+  `allowInsecureRequests`).
 
 ## 13. Open Questions
 

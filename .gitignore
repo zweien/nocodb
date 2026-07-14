@@ -123,4 +123,4 @@ antd.variable.css
 .nc-dev-registry.json
 .nc-dev-proxy.pid
 .nc-dev-proxy.log
-.nc-dev-logs/
+.nc-dev-logs/.zcode/
