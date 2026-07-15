@@ -63,10 +63,15 @@ jobs:
         run: |
           pnpm config set verifyDepsBeforeRun false
           pnpm install --no-frozen-lockfile
-          # nocodb-sdk: drop jest types (test-only), generate swagger, build
+          # nocodb-sdk: drop jest types (test-only, @types/jest not always
+          # resolvable), generate swagger, then build BOTH main (CJS) and
+          # module (ESM) — nc-gui's vite reads package.json's "module" field
+          # which points to build/module/index.js; missing it fails nc-gui
+          # build with "Failed to resolve entry for package nocodb-sdk".
           sed -i '/"types": \["jest"\],/d' packages/nocodb-sdk/tsconfig.json
           pnpm --filter=nocodb-sdk run generate:sdk
           pnpm --filter=nocodb-sdk run build:main
+          pnpm --filter=nocodb-sdk run build:module
           # integrations: may fail on undeclared deps (axios, ipaddr.js) — install + retry
           (cd packages/noco-integrations/core && pnpm add axios ipaddr.js 2>/dev/null || true)
           pnpm run integrations:build || true
