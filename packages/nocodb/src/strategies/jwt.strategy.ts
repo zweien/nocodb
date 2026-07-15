@@ -42,6 +42,23 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       workspaceId: req.ncWorkspaceId || Noco.ncDefaultWorkspaceId || undefined,
     });
 
-    return userWithRoles && { ...userWithRoles, isAuthorized: true };
+    return (
+      userWithRoles && {
+        ...userWithRoles,
+        isAuthorized: true,
+        // Preserve SSO identity from the JWT payload so downstream consumers
+        // (e.g. api-tokens.service.ts tagging tokens with fk_sso_client_id)
+        // can read req.user.extra.sso_client_id. genJwt spreads user.extra
+        // into the payload at issuance; without this, the JWT strategy would
+        // return a fresh DB object without the extra field, and SSO-created
+        // API tokens would not be isolated by SSO client.
+        extra: {
+          ...(jwtPayload.sso_client_id
+            ? { sso_client_id: jwtPayload.sso_client_id }
+            : {}),
+          ...(jwtPayload.extra || {}),
+        },
+      }
+    );
   }
 }
