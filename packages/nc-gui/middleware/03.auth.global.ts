@@ -262,6 +262,20 @@ async function tryShortTokenAuth(api: Api<any>, signIn: Actions['signIn'], state
       continueURL.searchParams.set('continueAfterSignIn', extraProps.continueAfterSignIn)
       window.history.pushState('object', document.title, continueURL.toString())
     }
+
+    // Clear stale SharedExecutionFn locks before reload. The reload interrupts
+    // any in-flight shared execution (e.g. refreshToken from a previous tab
+    // lifecycle); without this, the reloaded page sees a stale lock, waits the
+    // full timeout, then treats it as a refresh failure and signs the user out.
+    // This caused SSO logins to bounce back to /signin in Firefox (and
+    // intermittently in Chromium).
+    try {
+      localStorage.removeItem('nc-shared-execution-refreshToken-lock')
+      localStorage.removeItem('nc-shared-execution-refreshToken-result')
+    } catch {
+      // localStorage may be unavailable in rare contexts; reload anyway
+    }
+
     window.location.reload()
   }
 }
