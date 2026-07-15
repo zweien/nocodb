@@ -76,6 +76,11 @@ jobs:
           (cd packages/noco-integrations/core && pnpm add axios ipaddr.js 2>/dev/null || true)
           pnpm run integrations:build || true
           pnpm run registerIntegrations || true
+          # nocodb: install deps that src imports but package.json doesn't
+          # declare (rspack with nodeExternals still needs them resolvable at
+          # build time for require() calls). Without these, rspack fails with
+          # "Module not found: Can't resolve 'oracledb'/'image-size/fromFile'".
+          pnpm --filter=nocodb add @sentry/node node-machine-id image-size ipaddr.js minimatch moment oracledb
 
       - name: Build nc-gui (frontend)
         run: |
