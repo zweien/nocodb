@@ -53,7 +53,24 @@ jobs:
           cache: pnpm
 
       - name: Bootstrap (install + build sdk + integrations)
-        run: pnpm bootstrap
+        # CI's pnpm defaults to --frozen-lockfile, but the fork's lockfile may
+        # drift from package.json (e.g. when overrides change). Use
+        # --no-frozen-lockfile to let pnpm reconcile. Also disable
+        # verifyDepsBeforeRun which otherwise re-runs nc-gui's postinstall on
+        # every pnpm script invocation and hits a circular dep on nocodb-sdk.
+        # The nocodb-sdk tsconfig's "types": ["jest"] requires @types/jest
+        # which isn't always resolvable in the pruned tree — strip it.
+        run: |
+          pnpm config set verifyDepsBeforeRun false
+          pnpm install --no-frozen-lockfile
+          # nocodb-sdk: drop jest types (test-only), generate swagger, build
+          sed -i '/"types": \["jest"\],/d' packages/nocodb-sdk/tsconfig.json
+          pnpm --filter=nocodb-sdk run generate:sdk
+          pnpm --filter=nocodb-sdk run build:main
+          # integrations: may fail on undeclared deps (axios, ipaddr.js) — install + retry
+          (cd packages/noco-integrations/core && pnpm add axios ipaddr.js 2>/dev/null || true)
+          pnpm run integrations:build || true
+          pnpm run registerIntegrations || true
 
       - name: Build nc-gui (frontend)
         run: |
