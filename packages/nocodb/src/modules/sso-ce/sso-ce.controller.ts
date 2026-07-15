@@ -78,8 +78,13 @@ export class SsoCeController {
 
     // Bridge to the frontend's tryShortTokenAuth flow: the frontend POSTs
     // /auth/long-lived-token with this token in the xc-short-token header.
+    // Prefer NC_DASHBOARD_URL (frontend origin in split-mode deployments)
+    // over ncSiteUrl, so the browser lands on the SPA that consumes the
+    // short-token. Same-origin deployments leave NC_DASHBOARD_URL unset and
+    // fall back to ncSiteUrl.
     const shortToken = issueShortToken(user);
-    const base = (ncSiteUrl || '').replace(/\/+$/, '');
+    const dashUrl = process.env.NC_DASHBOARD_URL || '';
+    const base = (dashUrl || ncSiteUrl || '').replace(/\/+$/, '');
     return res.redirect(`${base}/?short-token=${shortToken}`);
   }
 
